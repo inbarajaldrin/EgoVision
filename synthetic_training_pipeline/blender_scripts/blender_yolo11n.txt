@@ -1,0 +1,90 @@
+import bpy
+import os
+from math import sin, cos, pi
+from mathutils import Vector
+from bpy_extras.object_utils import world_to_camera_view
+import numpy as np
+import random
+import bmesh
+
+# CONFIGURATION
+output_dir = os.path.expanduser("~/Desktop/Blender_OBB_Dataset")
+elevation_samples = 25  # vertical
+azimuth_samples = 25    # horizontal
+table_z_threshold = 0.0
+object_name = "Jenga_Block"
+radius = 0.4
+
+# Ensure output directory exists
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+# --- Save classes.txt dynamically ---
+classes_txt_path = os.path.join(output_dir, "classes.txt")
+scene_objects = [o for o in bpy.data.objects if o.pass_index > 0]
+scene_objects.sort(key=lambda o: o.pass_index)
+with open(classes_txt_path, "w") as f:
+    f.write("__background__\n")
+    for obj in scene_objects:
+        name_clean = obj.name.lower().replace(" ", "_")
+        f.write(f"{obj.pass_index:03d}_{name_clean}\n")
+print(f"Saved dynamic classes.txt to {classes_txt_path}")
+
+# Set render engine to Cycles
+bpy.context.scene.render.engine = 'CYCLES'
+
+# Get object and ensure it's visible
+obj = bpy.data.objects.get(object_name)
+if obj is None:
+    raise ValueError(f"Object '{object_name}' not found in the scene.")
+
+obj.hide_render = False
+obj.hide_viewport = False
+
+# Assign a unique pass index to the object (e.g., 1)
+obj.pass_index = 1
+
+camera = bpy.context.scene.camera
+render_width = bpy.context.scene.render.resolution_x
+render_height = bpy.context.scene.render.resolution_y
+
+def look_at(obj_camera, target_point):
+    direction = target_point - obj_camera.location
+    rot_quat = direction.to_track_quat('-Z', 'Y')
+    obj_camera.rotation_euler = rot_quat.to_euler()
+
+def spherical_to_cartesian(radius, theta, phi):
+    x = radius * sin(theta) * cos(phi)
+    y = radius * sin(theta) * sin(phi)
+    z = radius * cos(theta)
+    return Vector((x, y, z))
+
+def get_all_obb_points(obj):
+    return [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+
+def project_to_2d(camera, points3d):
+    return [(int(world_to_camera_view(bpy.context.scene, camera, pt).x * render_width), int((1 - world_to_camera_view(bpy.context.scene, camera, pt).y) * render_height)) for pt in points3d]
+
+image_index = 0
+for elev in range(elevation_samples):
+    theta = pi * (elev + 1) / (elevation_samples + 1)
+    for azim in range(azimuth_samples):
+        phi = 2 * pi * azim / azimuth_samples
+        camera.location = spherical_to_cartesian(radius, theta, phi)
+        look_at(camera, obj.location)
+
+        shared_base = f"{image_index:03d}"
+        bpy.context.scene.render.filepath = os.path.join(output_dir, shared_base + "_rgb0001")
+
+        bpy.ops.render.render(write_still=True)
+
+        obb_points_3d = get_all_obb_points(obj)
+        obb_points_2d = project_to_2d(camera, obb_points_3d)
+        obb_path = os.path.join(output_dir, f"{shared_base}_obb0001.txt")
+        with open(obb_path, "w") as f:
+            f.write(f"{object_name}: {obb_points_2d}\n")
+        print(f"[{image_index}] Saved OBB with 8 projected corners.")
+
+        image_index += 1
+
+print(" Synthetic dataset generation complete.")
