@@ -1,0 +1,27 @@
+import bpy
+import math
+
+# === CONFIGURABLE BASE SIZE ===
+base_width = 2.0     # X-axis
+base_length = 1.2    # Y-axis
+margin_factor = 1.1  # Extra margin in view
+
+# === CREATE OR GET CAMERA ===
+if "TopCam" in bpy.data.objects:
+    cam_obj = bpy.data.objects["TopCam"]
+    cam_data = cam_obj.data
+else:
+    cam_data = bpy.data.cameras.new("TopCam")
+    cam_obj = bpy.data.objects.new("TopCam", cam_data)
+    bpy.context.scene.collection.objects.link(cam_obj)
+
+# === SET CAMERA AS ACTIVE ===
+bpy.context.scene.camera = cam_obj
+
+# === CONFIGURE CAMERA ===
+cam_data.type = 'ORTHO'
+cam_data.ortho_scale = max(base_width, base_length) * margin_factor
+
+# Place camera above origin and rotate downward
+cam_obj.location = (0, 0, 5)
+cam_obj.rotation_euler = (0, 0, 0)

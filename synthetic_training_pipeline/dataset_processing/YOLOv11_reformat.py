@@ -1,104 +1,153 @@
+#!/usr/bin/env python3
 import os
-import shutil
 import random
-import math
+import shutil
 import cv2
 import numpy as np
+import ast
 from pathlib import Path
 
-# Set seed for reproducibility
+# ──────────────────────────────────────────────────────────────────────
+# CONFIGURE YOUR SPLIT RATIOS
+# ──────────────────────────────────────────────────────────────────────
+VAL_FRACTION  = 0.20   # e.g. 20% validation
+TEST_FRACTION = 0.10   # e.g. 10% test
+assert VAL_FRACTION + TEST_FRACTION < 1.0, "Splits must sum to <1"
+
+# ──────────────────────────────────────────────────────────────────────
+# PATHS & RAW CLASS LOADING
+# ──────────────────────────────────────────────────────────────────────
 random.seed(42)
+src_dir     = Path("/home/aaugus11/Downloads/FBM_Assembly3/rendered_obb").expanduser()
+yolo_root   = src_dir / "YOLOv11_Dataset"
+classes_txt = src_dir / "classes.txt"
 
-# Source and destination
-src_dir = Path("~/Desktop/Blender_OBB_Dataset").expanduser()
-yolo_root = src_dir / "YOLOv11_Dataset"
+# Read full list of class names (including duplicates)
+full_names = []
+with open(classes_txt, "r") as cf:
+    for line in cf:
+        entry = line.strip()
+        if not entry or entry == "__background__":
+            continue
+        _, name = entry.split("_", 1)
+        full_names.append(name)
 
-# Create new structure matching Roboflow format
-for split in ["train", "val", "test"]:
-    os.makedirs(yolo_root / split / "images", exist_ok=True)
-    os.makedirs(yolo_root / split / "labels", exist_ok=True)
+# Derive the unique “base” class names, in order of first appearance
+base_names = []
+for name in full_names:
+    base = name.split(".", 1)[0]
+    if base not in base_names:
+        base_names.append(base)
 
-# Get image-label pairs
-images = sorted([f for f in src_dir.glob("*_rgb0001.png")])
-labels = sorted([f for f in src_dir.glob("*_obb0001.txt")])
-assert len(images) == len(labels), "Image and label count mismatch!"
-
-# Use all images for training
-train_idx = list(range(len(images)))
-
-# Randomly sample 20% for validation and 10% for testing (copying from training set)
-val_idx = random.sample(train_idx, int(0.2 * len(images)))
-remaining = list(set(train_idx) - set(val_idx))
-test_idx = random.sample(remaining, int(0.1 * len(images)))
-
-# Class mapping
+# Build mapping from full duplicate name → base class ID
 class_map = {
-    "Jenga_Block": 0,
+    full: base_names.index(full.split(".", 1)[0])
+    for full in full_names
 }
 
+# ──────────────────────────────────────────────────────────────────────
+# MAKE TRAIN/VAL/TEST FOLDERS
+# ──────────────────────────────────────────────────────────────────────
+for split in ["train", "val", "test"]:
+    (yolo_root / split / "images").mkdir(parents=True, exist_ok=True)
+    (yolo_root / split / "labels").mkdir(parents=True, exist_ok=True)
+
+# ──────────────────────────────────────────────────────────────────────
+# COLLECT SOURCE FILES
+# ──────────────────────────────────────────────────────────────────────
+images = sorted(src_dir.glob("*_rgb0001.png"))
+labels = sorted(src_dir.glob("*_obb0001.txt"))
+assert len(images) == len(labels), "Image/label count mismatch"
+
+# ──────────────────────────────────────────────────────────────────────
+# SPLIT INDICES
+# ──────────────────────────────────────────────────────────────────────
+N      = len(images)
+n_val  = int(N * VAL_FRACTION)
+n_test = int(N * TEST_FRACTION)
+
+all_idx   = list(range(N))
+val_idx   = random.sample(all_idx, n_val)
+remaining = list(set(all_idx) - set(val_idx))
+test_idx  = random.sample(remaining, n_test)
+train_idx = list(set(remaining) - set(test_idx))
+
+print(f"Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
+
+# ──────────────────────────────────────────────────────────────────────
+# PARSING ORIGINAL OBB LINES
+# ──────────────────────────────────────────────────────────────────────
 def parse_obb_line(line):
-    name, coords_str = line.strip().split(": ")
-    coords_str = coords_str.strip("[]")
-    point_strs = coords_str.split("), (")
-    coords = []
-    for p in point_strs:
-        p = p.replace("(", "").replace(")", "")
-        x, y = map(int, p.split(","))
-        coords.append((x, y))
-    return name, coords
+    raw_name, raw_pts = line.strip().split(":", 1)
+    name = raw_name.lower().replace(" ", "_")
+    pts = ast.literal_eval(raw_pts.strip())
+    # axis-aligned?
+    if (
+        isinstance(pts, (list, tuple))
+        and len(pts) == 4
+        and all(isinstance(v, (int, float)) for v in pts)
+    ):
+        x0, y0, x1, y1 = pts
+        corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    else:
+        corners = [(float(p[0]), float(p[1])) for p in pts]
+    return name, corners
 
-def normalize_point(x, y, w_img, h_img):
-    return x / w_img, y / h_img
-
+# ──────────────────────────────────────────────────────────────────────
+# CONVERT ONE LABEL FILE TO YOLOv11 FORMAT
+# ──────────────────────────────────────────────────────────────────────
 def convert_obb_to_yolo11(txt_path, img_w, img_h):
     lines = open(txt_path).readlines()
-    yolo_lines = []
-
+    out_lines = []
     for line in lines:
-        class_name, points = parse_obb_line(line)
-        if class_name not in class_map:
+        cls_name, corners = parse_obb_line(line)
+        # map duplicate → base
+        if cls_name not in class_map:
             continue
+        cls_id = class_map[cls_name]
+        # normalize
+        norm = [(x / img_w, y / img_h) for x, y in corners]
+        flat = " ".join(f"{x:.6f} {y:.6f}" for x, y in norm)
+        out_lines.append(f"{cls_id} {flat}")
+    return "\n".join(out_lines)
 
-        norm_points = [normalize_point(x, y, img_w, img_h) for x, y in points]
-        flat_coords = [f"{x:.6f} {y:.6f}" for x, y in norm_points]
-        yolo_lines.append(f"{class_map[class_name]} " + " ".join(flat_coords))
+# ──────────────────────────────────────────────────────────────────────
+# COPY & CONVERT FUNCTION
+# ──────────────────────────────────────────────────────────────────────
+def process(idx_list, split):
+    for i in idx_list:
+        img_src = images[i]
+        lbl_src = labels[i]
+        base    = img_src.stem.split("_")[0]
 
-    return "\n".join(yolo_lines) + "\n" if yolo_lines else ""
+        img_dst = yolo_root / split / "images" / f"{base}.png"
+        lbl_dst = yolo_root / split / "labels" / f"{base}.txt"
 
-def process(idx_list, split_name):
-    for idx in idx_list:
-        img_src = images[idx]
-        lbl_src = labels[idx]
-
-        base_name = img_src.stem.split("_")[0]  # '000'
-        img_dst = yolo_root / split_name / "images" / f"{base_name}.png"
-        lbl_dst = yolo_root / split_name / "labels" / f"{base_name}.txt"
-
-        # Copy image
         shutil.copy2(img_src, img_dst)
+        im = cv2.imread(str(img_src))
+        h, w = im.shape[:2]
 
-        # Read image size
-        img = cv2.imread(str(img_src))
-        h_img, w_img = img.shape[:2]
+        yolo_txt = convert_obb_to_yolo11(lbl_src, w, h)
+        with open(lbl_dst, "w") as f:
+            if yolo_txt:
+                f.write(yolo_txt + "\n")
 
-        # Generate YOLOv11 label
-        yolo_label = convert_obb_to_yolo11(lbl_src, w_img, h_img)
-        with open(lbl_dst, 'w') as f:
-            f.write(yolo_label)
-
-# Process all sets
+# ──────────────────────────────────────────────────────────────────────
+# RUN PROCESSING
+# ──────────────────────────────────────────────────────────────────────
 process(train_idx, "train")
-process(val_idx, "val")
-process(test_idx, "test")
+process(val_idx,   "val")
+process(test_idx,  "test")
 
-# Create dataset.yaml
+# ──────────────────────────────────────────────────────────────────────
+# WRITE dataset.yaml WITH ONLY BASE CLASSES
+# ──────────────────────────────────────────────────────────────────────
 with open(yolo_root / "dataset.yaml", "w") as f:
-    f.write(f"""
-train: {yolo_root/'train/images'}
-val: {yolo_root/'val/images'}
-test: {yolo_root/'test/images'}
-nc: 1
-names: ["Jenga_Block"]
-""")
+    f.write(f"train: {yolo_root/'train/images'}\n")
+    f.write(f"val:   {yolo_root/'val/images'}\n")
+    f.write(f"test:  {yolo_root/'test/images'}\n")
+    f.write(f"nc:    {len(base_names)}\n")
+    names_list = ", ".join(f"'{n}'" for n in base_names)
+    f.write(f"names: [{names_list}]\n")
 
-print(" YOLOv11 Dataset prepared in Roboflow-compatible format with train/val/test splits.")
+print("YOLOv11 Dataset prepared with de-duplicated classes and splits.")
