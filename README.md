@@ -1,6 +1,8 @@
-# EgoGrasp: A Self‑Supervised Perception‑to‑Action Pipeline for Robotic Manipulation
+# EgoVision: Egocentric RGB-D Mesh Reconstruction & Synthetic Data-Driven Object Detection for Self-Supervised Robotic Manipulation
 
-EgoGrasp is a fully automated, simulation‑driven object detection and manipulation framework. Starting from real-world RGBD scans captured by a robot-mounted camera, it generates CAD‑like meshes, synthesizes training data in Blender, trains a YOLOv11n OBB detector, and deploys the model back on the robot for pick‑and‑place tasks—all without manual labeling (getting there).
+**EgoVision** is a self-supervised, simulation-driven pipeline for egocentric object detection in robotic workspaces. Starting from real-world RGB-D scans of the workspace and individual objects, the system reconstructs textured 3D mesh models, which are then imported into Blender to generate synthetic scenes.
+
+These scenes are rendered with randomized views and corresponding oriented bounding box (OBB) annotations, producing a fully annotated dataset without manual labeling. This dataset is used to train a YOLO OBB detector, which can then be deployed on the same egocentric camera for real-time object detection in the original environment.
 
 In addition, a work‑in‑progress module aligns 2D schematic instructions (e.g., IKEA manuals) with 3D scene data to enable instruction‑conditioned manipulation.
 
@@ -44,7 +46,7 @@ Uses the fused meshes to generate a self‑supervised detection model.
 ## Repository Structure
 
 ```bash
-EgoGrasp/
+EgoVision/
 ├── assets/                           # Raw `.blend` and `.glb` scans
 ├── rgbd_mesh_pipeline/               # Scan‑to‑mesh processing
 │   ├── blender_scripts/
