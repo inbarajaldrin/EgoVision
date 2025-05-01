@@ -1,63 +1,43 @@
-# EgoGrasp : A Self-Supervised Perception-to-Action Pipeline for Robotic Manipulation
+# EgoGrasp: A Self‑Supervised Perception‑to‑Action Pipeline for Robotic Manipulation
 
-EgoGrasp is a self-supervised, simulation-driven object detection pipeline designed to enable robotic arms to manipulate previously unseen objects and scenes using only egocentric RGBD input.
+EgoGrasp is a fully automated, simulation‑driven object detection and manipulation framework. Starting from real-world RGBD scans captured by a robot-mounted camera, it generates CAD‑like meshes, synthesizes training data in Blender, trains a YOLOv11n OBB detector, and deploys the model back on the robot for pick‑and‑place tasks—all without manual labeling (getting there).
 
-This system starts with real-world depth and color data captured from a robot-mounted camera, processes it into CAD-like models, and then leverages synthetic rendering to train a YOLOv11n OBB (Oriented Bounding Box) detector—without any manual labeling. The trained model is then deployed back on the robot for accurate object detection and grasp planning in real scenes.
-
-## Project Overview
-
-This project consists of two interconnected pipelines:
+In addition, a work‑in‑progress module aligns 2D schematic instructions (e.g., IKEA manuals) with 3D scene data to enable instruction‑conditioned manipulation.
 
 ---
 
-### 1. Self-Supervised Object Learning and Synthetic Training Loop
+## Two Main Pipelines
 
-**Goal:** Learn to detect and manipulate unknown objects using only real RGBD scans and synthetic data.
+### 1. RGBD Mesh Pipeline (`rgbd_mesh_pipeline/`)
+Converts Polycam `.glb` scans into clean, aligned `.ply` and `.obj` meshes.
 
-#### Pipeline Stages:
+1. **GLB→PLY Export**: Blender script (`blender_scripts/0_conv_glb_ply.txt`) batches Polycam `.glb` → colored `.ply`.
+2. **Floor Removal**: `1_mesh_plane_removal.py` / `1_mesh_plane_removal2.py` remove planar ground.
+3. **Centering**: `2_centre_ply.py` recenters mesh at origin.
+4. **Alignment & Fusion**: `3_align_merge_mesh.py` (TEASER++ + FPFH + ICP) merges multi‑view scans. Optional manual tweak with `3_manual_rotate.py`.
+5. **PLY→OBJ Export**: `4_conv_ply_obj.py` bakes vertex colors → `.obj` + `.mtl` for Blender.
 
-1. **Data Acquisition:**
-   - Capture real RGBD point clouds from an egocentric robotic arm.
+### 2. Synthetic Training Pipeline (`synthetic_training_pipeline/`)
+Uses the fused meshes to generate a self‑supervised detection model.
 
-2. **Point Cloud Processing:**
-   - Clean and segment individual objects from the point cloud.
-
-3. **CAD Model Generation:**
-   - Convert object point clouds into textured CAD models (with RGB color).
-
-4. **Synthetic Dataset Creation:**
-   - Use Blender to render synthetic views of the object from multiple angles.
-   - Save both RGB images and OBB annotations.
-
-5. **Dataset Reformatting:**
-   - Convert the Blender-generated dataset to the YOLOv11n OBB format.
-
-6. **Model Training:**
-   - Train a YOLOv11n model on the synthetic dataset for OBB detection.
-
-7. **Deployment:**
-   - Use the trained model on the robotic arm for real-time pick-and-place based on live egocentric camera feed.
+1. **Blend & Render**: Blender scripts produce RGB + OBB annotation pairs.
+2. **Dataset Formatting**: `dataset_processing/YOLOv11_reformat.py` → YOLOv11n folder structure.
+3. **Training**: `train_yolo11n/train_yolo11n.py` trains oriented bounding‑box detector.
+4. **Inference**: `inference/infer_and_draw.py` runs model on test images and visualizes results.
+5. **Evaluation**: `evaluation/baseline.py` computes IoU, centroid & angle error; summary in `baseline.pdf`.
+6. **Feature Tracking & Annotation (WIP)**: `feature_tracking_annotation/` matches sketchified OBJ renders to manual‑crop images for cross‑modal annotation.
 
 ---
 
-### 2. Instruction-Conditioned Manipulation (In Progress)
+## Prerequisites & Installation
 
-**Goal:** Interpret 2D schematic instructions (e.g., IKEA manuals) and execute corresponding manipulation.
-
-#### Key Ideas:
-
-1. **Instruction Parsing:**
-   - Input: 2D sketchified image of a part from an instruction manual.
-   - Output: Detected part features and geometry.
-
-2. **2D-to-3D Matching:**
-   - Match the 2D schematic part with 3D scene data captured from the RGBD sensor.
-
-3. **Object Recognition:**
-   - Use the trained YOLOv11n model to assign a class to the detected object.
-
-4. **Manipulation:**
-   - Execute a pick-and-place task based on the interpreted instruction.
+- **Blender** 4.3 for GLB→PLY export & data rendering
+- **Python 3.8+** virtual environment
+- Required packages:
+  ```bash
+  pip install open3d numpy scikit-learn ultralytics
+  ```
+- TEASER++ build instructions: https://github.com/MIT-SPARK/TEASER-plusplus.git
 
 ---
 
@@ -65,19 +45,24 @@ This project consists of two interconnected pipelines:
 
 ```bash
 EgoGrasp/
-├── synthetic_training_pipeline/      # Fully implemented part
-│   ├── assets/                       # Contains .blend files for objects
-│   ├── blender_scripts/             # Blender OBB + rendering scripts
-│   ├── visualize/                   # Scripts to visualize Blender or YOLOv11n outputs
-│   ├── dataset_processing/          # Converts raw Blender output to YOLOv11n format
-│   ├── train_yolo11n/               # Training scripts and model checkpoints
-│   ├── inference/                   # Uses trained model to predict OBBs
-│   ├── evaluation/                  # Baseline evaluation scripts and results (e.g., IoU, angle diff)
-│   ├── YOLOv11_Dataset/             # Reformatted dataset in YOLOv11n format
-│   └── README.md                    # README for synthetic training pipeline only
-│
-├── instruction_pipeline/            # (Planned) IKEA-style schematic to 3D recognition + manipulation
-│   └── README.md                    # Will describe instruction-conditioned manipulation steps
-│
-├── baseline.pdf                     # Quantitative evaluation results (visual + metric)
-└── README.md                        # This file (top-level overview)
+├── assets/                           # Raw `.blend` and `.glb` scans
+├── rgbd_mesh_pipeline/               # Scan‑to‑mesh processing
+│   ├── blender_scripts/
+│   ├── 1_mesh_plane_removal.py
+│   ├── 2_centre_ply.py
+│   ├── 3_align_merge_mesh.py
+│   ├── 3_manual_rotate.py
+│   └── 4_conv_ply_obj.py
+
+├── synthetic_training_pipeline/      # Synthetic data → YOLO model
+│   ├── blender_scripts/
+│   ├── dataset_processing/
+│   ├── train_yolo11n/
+│   ├── inference/
+│   ├── evaluation/
+│   └── feature_tracking_annotation/  # (Planned) 2D sketch → 3D manipulation
+```
+
+
+_EgoGrasp: closing the loop from real-world perception to simulation-based learning to enhance real-time robotic vision._
+
