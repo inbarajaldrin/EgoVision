@@ -114,6 +114,28 @@ python evaluation/baseline.py
 
 Output visualizations and a 4-column comparison figure are saved.
 
+---
+
+## 8. Feature Tracking & Annotation (WIP)
+
+Once you have your `.obj` exports from the scan pipeline, you can generate “sketchified” renderings and match them against real instruction-manual crops:
+
+1. **Import each OBJ and create sketches in Blender**  
+   - Open Blender and run the script in  
+     `feature_tracking_annotation/blender_scripts/import_obj_sketchify.txt`  
+   - This will load your OBJ(s) and output a folder of sketched images (e.g.  
+     `sketches/blue_lego/`, `sketches/red_lego/`, etc.).
+
+2. **Match generated sketches to manual‐crop photos**  
+   - Run the feature‐tracking script to find the best sketch/manual match:  
+     ```bash
+     python feature_tracking_annotation/feature_track_sketch.py \
+         feature_tracking_annotation/sketches/ \
+         assets/lego/lego_dataset_images/ 
+     ```
+
+> **Note:** This feature‐tracking & annotation module is still in progress. Future updates will automatically generate per‐class label files for downstream training.
+
 
 ## 🔹 Folder Summary
 
@@ -128,8 +150,9 @@ synthetic_training_pipeline/
 ├── visualize/                  # Helper visualization scripts
 ├── evaluation/                 # Metrics and summary PDF
 │   └── baseline.pdf            # Visual + quantitative results
+├── feature_tracking_annotation/  # Sketch-based matching of OBJ renders to manual crops (WIP)
+│   ├── blender_scripts/         # import_obj_sketchify.txt
+│   └── feature_track_sketch.py  # feature‐tracking & match export
 └── README.md                   # This file
 ```
-
----
 
