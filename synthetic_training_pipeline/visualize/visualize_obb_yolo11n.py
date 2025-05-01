@@ -3,7 +3,7 @@ import random
 from PIL import Image, ImageDraw
 
 # Base directories
-base_dir = "/home/aaugus11/Desktop/Blender_OBB_Dataset/YOLOv11_Dataset"
+base_dir = "/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb/YOLOv11_Dataset"
 test_img_dir = os.path.join(base_dir, "test", "images")
 test_lbl_dir = os.path.join(base_dir, "test", "labels")
 output_dir = os.path.join(base_dir, "test_visualized")

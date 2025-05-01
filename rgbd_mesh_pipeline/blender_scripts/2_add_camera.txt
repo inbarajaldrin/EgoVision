@@ -1,0 +1,36 @@
+import bpy
+import mathutils
+import math
+
+# === CONFIGURABLE TABLE SIZE ===
+base_width = 1.0
+base_length = 1.1
+margin_factor = 1.1
+
+# === TARGET LOCATION (center of table) ===
+target_location = mathutils.Vector((0, 0, 0.05))  # Slightly above table surface
+
+# === CREATE OR GET CAMERA ===
+cam_name = "TiltedCam"
+if cam_name in bpy.data.objects:
+    cam_obj = bpy.data.objects[cam_name]
+    cam_data = cam_obj.data
+else:
+    cam_data = bpy.data.cameras.new(cam_name)
+    cam_obj = bpy.data.objects.new(cam_name, cam_data)
+    bpy.context.scene.collection.objects.link(cam_obj)
+
+# === SET CAMERA TYPE ===
+cam_data.type = 'PERSP'  # Use perspective for more natural look
+cam_data.lens = 35       # Standard focal length
+
+# === CAMERA LOCATION (above and behind) ===
+cam_obj.location = mathutils.Vector((2.5, -2.5, 2.5))
+
+# === AIM CAMERA AT TABLE CENTER ===
+direction = target_location - cam_obj.location
+rot_quat = direction.to_track_quat('-Z', 'Y')  # Face -Z toward target, Y as up
+cam_obj.rotation_euler = rot_quat.to_euler()
+
+# === SET AS ACTIVE CAMERA ===
+bpy.context.scene.camera = cam_obj

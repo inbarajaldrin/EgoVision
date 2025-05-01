@@ -1,0 +1,89 @@
+import bpy
+import os
+
+# ===== CONFIGURATION =====
+FOLDER_PATH = "/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/obj"
+# ========================
+
+def import_obj_files(folder_path):
+    """Import all OBJ files from the specified folder"""
+    abs_path = os.path.abspath(os.path.expanduser(folder_path))
+    print(f"\nAttempting to import from: {abs_path}")
+    
+    if not os.path.exists(abs_path):
+        print(f"ERROR: Folder does not exist - {abs_path}")
+        return False
+    
+    # List directory contents
+    print("\nFolder contents:")
+    for f in os.listdir(abs_path):
+        print(f" - {f}")
+    
+    # Get OBJ files (excluding .mtl)
+    obj_files = [f for f in os.listdir(abs_path) 
+                if f.lower().endswith('.obj') and not f.lower().endswith('.mtl')]
+    
+    print(f"\nFound {len(obj_files)} OBJ files:")
+    for obj in obj_files:
+        print(f" - {obj}")
+    
+    if not obj_files:
+        print("No OBJ files found")
+        return False
+    
+    # Ensure we're in object mode
+    if bpy.ops.object.mode_set.poll():
+        bpy.ops.object.mode_set(mode='OBJECT')
+    
+    # Select all existing objects
+    bpy.ops.object.select_all(action='SELECT')
+    
+    # Delete all existing objects
+    bpy.ops.object.delete()
+    
+    success_count = 0
+    for obj_file in obj_files:
+        file_path = os.path.join(abs_path, obj_file)
+        print(f"\nAttempting to import: {file_path}")
+        
+        try:
+            # First make sure nothing is selected
+            bpy.ops.object.select_all(action='DESELECT')
+            
+            # Import with modern operator
+            bpy.ops.wm.obj_import(
+                filepath=file_path,
+                forward_axis='Y',  # Match common OBJ conventions
+                up_axis='Z'
+            )
+            
+            success_count += 1
+            print(f"Successfully imported: {obj_file}")
+            
+            # Print imported objects
+            for obj in bpy.context.selected_objects:
+                print(f"  Imported object: {obj.name}")
+                
+        except Exception as e:
+            print(f"FAILED to import {obj_file}: {str(e)}")
+            # Print full traceback for debugging
+            import traceback
+            traceback.print_exc()
+    
+    print(f"\nImport complete. Successfully imported {success_count}/{len(obj_files)} files")
+    return success_count > 0
+
+if __name__ == "__main__":
+    # Run the import
+    result = import_obj_files(FOLDER_PATH)
+    
+    # Print final scene objects
+    print("\nCurrent scene objects:")
+    for obj in bpy.data.objects:
+        print(f" - {obj.name} ({obj.type})")
+    
+    # Report to Blender's UI
+    if result:
+        print("\nSUCCESS: OBJ files imported")
+    else:
+        print("\nFAILURE: No files were imported")

@@ -1,0 +1,34 @@
+# launch blender using ~/Applications/blender
+# run script inside blender
+
+import bpy
+
+bpy.ops.import_scene.gltf(filepath="/home/aaugus11/Downloads/13_04_2025.glb")
+
+export_path = "/home/aaugus11/Downloads/lego_red3.ply"  # ← Change this!
+
+bpy.ops.geometry.color_attribute_add(name="Color")
+
+# === Set Cycles Render Engine ===
+bpy.context.scene.render.engine = 'CYCLES'
+
+# === Bake Settings ===
+
+bpy.ops.object.bake(
+    type='DIFFUSE',
+    pass_filter={'COLOR'},
+    target='VERTEX_COLORS',
+    use_clear=True,
+    use_selected_to_active=False,
+    margin=16,
+    margin_type='EXTEND'
+)
+
+print("Baking complete")
+
+## === Export to PLY ===
+bpy.ops.wm.ply_export(
+    filepath=export_path,
+)
+
+print(f"Exported to: {export_path}")

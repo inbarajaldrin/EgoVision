@@ -1,0 +1,232 @@
+import bpy
+import os
+from math import radians
+from mathutils import Euler, Vector
+
+# ===== CONFIGURATION =====
+INPUT_OBJ_FOLDER = "/home/aaugus11/Projects/cse598/EgoGrasp/assets/lego/obj"
+OUTPUT_FOLDER = "/home/aaugus11/Projects/cse598/src/polycam/pipeline/output/sketches"
+BASE_CAMERA_DISTANCE = 1.5  # Base distance multiplier
+MIN_CAMERA_DISTANCE = 0.5   # Minimum distance to prevent getting too close
+# update number of photos for each obj here def render_rotations(obj, output_folder, steps=36):
+# ========================
+
+def calculate_object_scale(obj):
+    """Calculate object dimensions and return appropriate scale factor"""
+    bbox = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    dimensions = Vector((
+        max(v.x for v in bbox) - min(v.x for v in bbox),
+        max(v.y for v in bbox) - min(v.y for v in bbox),
+        max(v.z for v in bbox) - min(v.z for v in bbox)
+    ))
+    max_dim = max(dimensions.x, dimensions.y, dimensions.z)
+    
+    # If object is very small, calculate scale factor to make it visible
+    if max_dim < 0.1:
+        return 1.0 / max_dim * 0.1  # Scale up to ~0.1 units
+    return 1.0
+
+def setup_camera(target_obj):
+    """Set up camera with proper distance and tracking"""
+    scene = bpy.context.scene
+    
+    # Create or get camera
+    if not scene.camera:
+        bpy.ops.object.camera_add()
+        cam = bpy.context.active_object
+        scene.camera = cam
+    else:
+        cam = scene.camera
+    
+    cam.data.type = 'PERSP'
+    cam.data.lens = 35  # Slightly wider angle for better framing
+    
+    if target_obj:
+        # Calculate object dimensions
+        bbox = [target_obj.matrix_world @ Vector(corner) for corner in target_obj.bound_box]
+        dimensions = Vector((
+            max(v.x for v in bbox) - min(v.x for v in bbox),
+            max(v.y for v in bbox) - min(v.y for v in bbox),
+            max(v.z for v in bbox) - min(v.z for v in bbox)
+        ))
+        max_dim = max(dimensions.x, dimensions.y, dimensions.z)
+        
+        # Calculate camera distance
+        distance = max(BASE_CAMERA_DISTANCE * max_dim, MIN_CAMERA_DISTANCE)
+        
+        # Position camera diagonally above and in front
+        cam.location = target_obj.location + Vector((0, -distance, distance * 0.5))
+        
+        # Clear existing constraints
+        for constraint in cam.constraints:
+            cam.constraints.remove(constraint)
+        
+        # Add new track-to constraint
+        constraint = cam.constraints.new(type='TRACK_TO')
+        constraint.target = target_obj
+        constraint.track_axis = 'TRACK_NEGATIVE_Z'
+        constraint.up_axis = 'UP_Y'
+        
+        # Force update
+        bpy.context.view_layer.update()
+
+    return cam
+
+def setup_render_settings():
+    """Configure render settings with white background"""
+    scene = bpy.context.scene
+    
+    # White background
+    if "WhiteBackground" not in bpy.data.worlds:
+        world = bpy.data.worlds.new("WhiteBackground")
+        world.use_nodes = True
+        bg_node = world.node_tree.nodes['Background']
+        bg_node.inputs[0].default_value = (1, 1, 1, 1)
+    scene.world = bpy.data.worlds["WhiteBackground"]
+    scene.render.film_transparent = False
+    
+    # Render settings
+    scene.render.engine = 'CYCLES'
+    scene.render.resolution_x = 1024
+    scene.render.resolution_y = 1024
+    scene.render.use_freestyle = True
+    
+    # Freestyle settings
+    view_layer = bpy.context.view_layer
+    view_layer.use_freestyle = True
+    fs = view_layer.freestyle_settings
+    
+    if not fs.linesets:
+        lineset = fs.linesets.new("SketchLines")
+    else:
+        lineset = fs.linesets.active
+    
+    ls_name = "SketchStyle"
+    if ls_name in bpy.data.linestyles:
+        ls = bpy.data.linestyles[ls_name]
+    else:
+        ls = bpy.data.linestyles.new(ls_name)
+    
+    lineset.linestyle = ls
+    ls.color = (0.0, 0.0, 0.0)
+    ls.alpha = 1.0
+    ls.thickness = 2.0
+
+def setup_material(obj):
+    """Create and assign a neutral white material"""
+    mat = bpy.data.materials.get("SketchMaterial") or bpy.data.materials.new("SketchMaterial")
+    mat.diffuse_color = (1.0, 1.0, 1.0, 1.0)
+    if obj and obj.type == 'MESH':
+        obj.data.materials.clear()
+        obj.data.materials.append(mat)
+
+def render_rotations(obj, output_folder, steps=36):
+    """Render rotations of an object"""
+    scene = bpy.context.scene
+    orig_rot = obj.rotation_euler.copy()
+    name = obj.name
+    
+    for i in range(steps):
+        angle = radians(360.0 * i / steps)
+        obj.rotation_euler = Euler((orig_rot.x, orig_rot.y, angle), 'XYZ')
+        scene.render.filepath = os.path.join(output_folder, f"{name}_{i:03d}.png")
+        bpy.ops.render.render(write_still=True)
+    
+    obj.rotation_euler = orig_rot
+
+def clean_scene():
+    """Remove all objects except the camera"""
+    # Keep camera and world
+    keep_objects = {obj.name for obj in bpy.data.objects if obj.type == 'CAMERA'}
+    
+    # Remove other objects
+    for obj in bpy.data.objects:
+        if obj.name not in keep_objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    
+    # Clean up orphaned data (except our white background)
+    for block in [bpy.data.meshes, bpy.data.materials, bpy.data.textures, bpy.data.images]:
+        for item in block:
+            if not item.users and item.name != "WhiteBackground":
+                block.remove(item)
+
+def process_single_obj(obj_path, output_dir):
+    """Process one OBJ file with full pipeline"""
+    try:
+        bpy.ops.wm.obj_import(filepath=obj_path)
+    except Exception as e:
+        print(f"Failed to import {obj_path}: {str(e)}")
+        return False
+    
+    imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
+    if not imported_objs:
+        print(f"No mesh found in {obj_path}")
+        return False
+    
+    main_obj = imported_objs[0]
+    
+    # Center object
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+    main_obj.location = (0, 0, 0)
+    
+    # Scale object if needed
+    scale_factor = calculate_object_scale(main_obj)
+    if scale_factor != 1.0:
+        main_obj.scale *= scale_factor
+        bpy.context.view_layer.update()
+    
+    setup_camera(main_obj)
+    setup_render_settings()
+    setup_material(main_obj)
+    
+    # Debug info
+    bbox = [main_obj.matrix_world @ Vector(corner) for corner in main_obj.bound_box]
+    dimensions = Vector((
+        max(v.x for v in bbox) - min(v.x for v in bbox),
+        max(v.y for v in bbox) - min(v.y for v in bbox),
+        max(v.z for v in bbox) - min(v.z for v in bbox)
+    ))
+    print(f"Object dimensions: {dimensions}")
+    print(f"Camera location: {bpy.context.scene.camera.location}")
+    
+    obj_name = os.path.splitext(os.path.basename(obj_path))[0]
+    obj_output_dir = os.path.join(output_dir, obj_name)
+    os.makedirs(obj_output_dir, exist_ok=True)
+    
+    render_rotations(main_obj, obj_output_dir)
+    return True
+
+def main():
+    if not os.path.isdir(INPUT_OBJ_FOLDER):
+        print(f"Input directory does not exist: {INPUT_OBJ_FOLDER}")
+        return
+    
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    
+    obj_files = [f for f in os.listdir(INPUT_OBJ_FOLDER) 
+                if f.lower().endswith('.obj') and not f.lower().endswith('.mtl')]
+    
+    if not obj_files:
+        print(f"No OBJ files found in {INPUT_OBJ_FOLDER}")
+        return
+    
+    print(f"Found {len(obj_files)} OBJ files to process")
+    
+    # Initial clean scene
+    clean_scene()
+    
+    for obj_file in obj_files:
+        obj_path = os.path.join(INPUT_OBJ_FOLDER, obj_file)
+        print(f"\nProcessing: {obj_file}")
+        
+        if process_single_obj(obj_path, OUTPUT_FOLDER):
+            print(f"Successfully processed {obj_file}")
+        else:
+            print(f"Failed to process {obj_file}")
+        
+        clean_scene()
+    
+    print("\nAll files processed!")
+
+if __name__ == "__main__":
+    main()

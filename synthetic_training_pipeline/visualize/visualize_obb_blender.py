@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 from scipy.spatial import ConvexHull
 
 # Directories
-input_dir = "/home/aaugus11/Desktop/Blender_OBB_Dataset"
+input_dir = "/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb"
 output_dir = os.path.join(input_dir, "output_with_bboxes")
 os.makedirs(output_dir, exist_ok=True)
 

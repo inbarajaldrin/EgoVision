@@ -22,7 +22,7 @@ model = YOLO('yolo11n-obb.pt')
 # Train with geometric + photometric augmentations
 model.train(
     task='obb',
-    data='/home/aaugus11/Desktop/Blender_OBB_Dataset/YOLOv11_Dataset/dataset.yaml',
+    data='/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb/YOLOv11_Dataset/dataset.yaml',
     epochs=100,
     imgsz=640,
     project='runs/obb',

@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+import bpy
+import os
+import random
+import math
+import numpy as np
+from mathutils import Vector
+from bpy_extras.object_utils import world_to_camera_view
+
+# ─── CONFIGURATION ───
+camera_name         = "TiltedCam"  # or "TopCam"
+output_dir          = os.path.expanduser("/home/aaugus11/Downloads/lego_rendered_obb")
+num_images          = 50            # number of randomizations
+num_clusters        = 2
+num_views_per_scene = 5 if camera_name.lower() == "tiltedcam" else 1
+duplicate           = 1            # extra copies per original
+image_resolution    = (1024, 1024)
+physics_sim_frames  = 40
+max_drop_height     = 0.1
+base_width, base_length = 0.3, 0.3
+margin              = 0.1
+base_name           = "Mesh_0"       # floor object
+
+# ─── SETUP ───
+scene = bpy.context.scene
+for vl in scene.view_layers:
+    vl.use_pass_object_index = True
+scene.render.engine = 'CYCLES'
+scene.render.image_settings.file_format = 'PNG'
+scene.render.resolution_x, scene.render.resolution_y = image_resolution
+scene.render.resolution_percentage = 100
+scene.cycles.samples = 128
+scene.cycles.use_denoising = True
+os.makedirs(output_dir, exist_ok=True)
+
+# Enable object-index pass for mask
+scene.use_nodes = True
+tree = scene.node_tree
+tree.nodes.clear()
+rl = tree.nodes.new("CompositorNodeRLayers")
+viewer = tree.nodes.new("CompositorNodeViewer")
+viewer.use_alpha = False
+tree.links.new(rl.outputs["IndexOB"], viewer.inputs["Image"])
+
+# Camera setup
+if camera_name not in bpy.data.objects:
+    raise ValueError(f"Camera '{camera_name}' not found.")
+scene.camera = bpy.data.objects[camera_name]
+camera = scene.camera
+camera.data.dof.use_dof = False
+
+# Orbit setup
+is_tilted = camera_name.lower() == "tiltedcam"
+
+# find the world‐space center of your “base” object
+base_obj = bpy.data.objects[base_name]
+base_loc = base_obj.location.copy()
+
+# compute radius & height from the camera’s current location
+start_loc = camera.location.copy()
+orbit_radius = math.hypot(start_loc.x - base_loc.x,
+                          start_loc.y - base_loc.y)
+orbit_height = start_loc.z - base_loc.z
+
+# now build a circular list of positions around base_loc
+def get_orbit_positions(n, center, r, h):
+    return [
+        Vector((
+            center.x + r * math.cos(2 * math.pi * i / n),
+            center.y + r * math.sin(2 * math.pi * i / n),
+            center.z + h
+        ))
+        for i in range(n)
+    ]
+
+orbit_positions = get_orbit_positions(
+    num_views_per_scene,
+    base_loc,
+    orbit_radius,
+    orbit_height
+)
+# and have your look_at() target the base center:
+target = base_loc
+
+
+# Collect objects
+original_objects = [o for o in scene.objects if o.type == 'MESH' and o.name != base_name]
+dups_global = []
+for o in list(original_objects):
+    for _ in range(duplicate):
+        c = o.copy(); c.data = o.data.copy()
+        bpy.context.collection.objects.link(c)
+        dups_global.append(c)
+original_objects.extend(dups_global)
+
+for idx, obj in enumerate(original_objects, start=1):
+    obj.pass_index = idx
+
+with open(os.path.join(output_dir, "classes.txt"), "w") as f:
+    f.write("__background__\n")
+    for obj in sorted(original_objects, key=lambda o: o.pass_index):
+        f.write(f"{obj.pass_index:03d}_{obj.name.lower().replace(' ', '_')}\n")
+
+original_tf = {o.name: (o.location.copy(), o.rotation_euler.copy()) for o in original_objects}
+
+# ─── HELPERS ───
+def look_at(cam, target):
+    direction = target - cam.location
+    cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+
+def half_extent_xy(obj):
+    corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    xs = [p.x for p in corners]; ys = [p.y for p in corners]
+    return (max(xs) - min(xs)) / 2, (max(ys) - min(ys)) / 2
+
+def generate_cluster_centers(n):
+    return [
+        (random.uniform(-base_width/2 + margin, base_width/2 - margin),
+         random.uniform(-base_length/2 + margin, base_length/2 - margin))
+        for _ in range(n)
+    ]
+
+def get_index_mask():
+    img = bpy.data.images.get("Viewer Node")
+    if not img:
+        raise RuntimeError("Viewer Node image missing")
+    pixels = np.array(img.pixels[:], dtype=np.float32)
+    H, W = image_resolution[1], image_resolution[0]
+    rgba = pixels.reshape(H, W, 4)
+    return np.rint(rgba[:, :, 0]).astype(np.uint16)
+
+def get_obb_2d(o, cam, rw, rh):
+    pts = []
+    for c in o.bound_box:
+        wp = o.matrix_world @ Vector(c)
+        co = world_to_camera_view(scene, cam, wp)
+        if co.z <= 0:
+            continue
+        x = int(co.x * rw)
+        y = int((1 - co.y) * rh)
+        pts.append((x, y))
+    return pts
+
+def is_in_frame(pts, w, h):
+    return any(0 <= x < w and 0 <= y < h for x, y in pts)
+
+# ─── MAIN LOOP ───
+rw, rh = image_resolution
+for i in range(num_images):
+    print(f"\n[Randomization {i+1}/{num_images}]")
+
+    centers = generate_cluster_centers(num_clusters)
+    for o in original_objects:
+        o.rotation_euler = (
+            math.pi * (random.random() < 0.5),
+            math.pi * (random.random() < 0.5),
+            random.uniform(0, 2*math.pi)
+        )
+        bpy.context.view_layer.update()
+        cx, cy = random.choice(centers)
+        hx, hy = half_extent_xy(o)
+        x = random.uniform(max(-base_width/2 + hx + margin, cx - 0.05),
+                           min( base_width/2 - hx - margin, cx + 0.05))
+        y = random.uniform(max(-base_length/2 + hy + margin, cy - 0.05),
+                           min( base_length/2 - hy - margin, cy + 0.05))
+        o.location = (x, y, random.uniform(0, max_drop_height))
+
+    for o in original_objects:
+        if not o.rigid_body:
+            bpy.context.view_layer.objects.active = o
+            bpy.ops.rigidbody.object_add()
+        o.rigid_body.type = 'ACTIVE'
+        o.rigid_body.collision_shape = 'CONVEX_HULL'
+        o.rigid_body.mass = 1.0
+    floor = bpy.data.objects.get(base_name)
+    if floor and not floor.rigid_body:
+        bpy.context.view_layer.objects.active = floor
+        bpy.ops.rigidbody.object_add()
+        floor.rigid_body.type = 'PASSIVE'
+        floor.rigid_body.collision_shape = 'BOX'
+    scene.frame_start = 1
+    scene.frame_end   = physics_sim_frames
+    bpy.ops.ptcache.free_bake_all()
+    bpy.ops.ptcache.bake_all(bake=True)
+    scene.frame_set(physics_sim_frames)
+
+    for view_idx, cam_pos in enumerate(orbit_positions):
+        if is_tilted:
+            camera.location = cam_pos
+            look_at(camera, target)
+
+        fname = f"{i:03d}_v{view_idx:02d}"
+        scene.render.filepath = os.path.join(output_dir, fname + "_rgb0001.png")
+        bpy.ops.render.render(write_still=True)
+
+        mask = get_index_mask()
+        obb_f = os.path.join(output_dir, fname + "_obb0001.txt")
+        with open(obb_f, "w") as f:
+            for o in original_objects:
+                zs = [(o.matrix_world @ Vector(c)).z for c in o.bound_box]
+                if max(zs) < 0.0:
+                    continue
+                ys, xs = np.where(mask == o.pass_index)
+                if xs.size == 0:
+                    continue
+                x0, x1 = xs.min(), xs.max()
+                y0, y1 = ys.min(), ys.max()
+                area = (x1 - x0 + 1)*(y1 - y0 + 1)
+                if xs.size / float(area) < 0.2:
+                    continue
+                pts = get_obb_2d(o, camera, rw, rh)
+                if not pts or not is_in_frame(pts, rw, rh):
+                    continue
+                f.write(f"{o.name}: {pts}\n")
+        print(f"    → wrote {obb_f}")
+
+    for o in original_objects:
+        loc, rot = original_tf[o.name]
+        o.location, o.rotation_euler = loc, rot
+
+# ─── CLEANUP ───
+for d in dups_global:
+    bpy.data.objects.remove(d, do_unlink=True)
+
+print("\n✓ Done generating images + OBBs + cleanup.")

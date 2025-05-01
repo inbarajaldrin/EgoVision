@@ -4,9 +4,9 @@ from pathlib import Path
 import random
 
 # Paths
-model_path = "best.pt"
-val_dir = Path("/home/aaugus11/Desktop/Blender_OBB_Dataset/YOLOv11_Dataset/test/images")
-output_dir = Path("/home/aaugus11/Desktop/Blender_OBB_Dataset/codes/train_yolo11n/output")
+model_path = "/home/aaugus11/Projects/cse598/EgoGrasp/synthetic_training_pipeline/runs/obb/jenga_obb_aug/weights/best.pt"
+val_dir = Path("/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb/YOLOv11_Dataset/test/images")
+output_dir = Path("/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb/infer_draw")
 label_out_dir = output_dir / "labels"
 output_dir.mkdir(parents=True, exist_ok=True)
 label_out_dir.mkdir(parents=True, exist_ok=True)
@@ -15,14 +15,14 @@ label_out_dir.mkdir(parents=True, exist_ok=True)
 model = YOLO(model_path)
 
 # Get up to 10 random images from val
-image_paths = list(val_dir.glob("*155.png"))
+image_paths = list(val_dir.glob("*.png"))
 random.shuffle(image_paths)
 image_paths = image_paths[:10]
 
 # Inference + Save predictions
 for img_path in image_paths:
     name = img_path.stem
-    results = model(img_path)
+    results = model(img_path,task='obb')
     pred_img = results[0].plot()
 
     # Save prediction image

@@ -18,7 +18,7 @@ assert VAL_FRACTION + TEST_FRACTION < 1.0, "Splits must sum to <1"
 # PATHS & RAW CLASS LOADING
 # ──────────────────────────────────────────────────────────────────────
 random.seed(42)
-src_dir     = Path("/home/aaugus11/Downloads/FBM_Assembly3/rendered_obb").expanduser()
+src_dir     = Path("/home/aaugus11/Projects/cse598/EgoGrasp/glb_to_obj_pipeline/lego_rendered_obb").expanduser()
 yolo_root   = src_dir / "YOLOv11_Dataset"
 classes_txt = src_dir / "classes.txt"
 

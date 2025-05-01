@@ -1,0 +1,35 @@
+import bpy
+
+# === CONFIGURATION ===
+base_name = "Mesh_0"
+base = bpy.data.objects.get(base_name)
+
+if not base:
+    raise Exception(f"Base object named '{base_name}' not found!")
+
+# === SET BASE AS PASSIVE ===
+if not base.rigid_body:
+    bpy.context.view_layer.objects.active = base
+    bpy.ops.rigidbody.object_add()
+base.rigid_body.type = 'PASSIVE'
+base.rigid_body.collision_shape = 'BOX'
+
+# === SET OTHER OBJECTS AS ACTIVE ===
+for obj in bpy.data.objects:
+    if obj.type == 'MESH' and obj.name != base_name:
+        if not obj.rigid_body:
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.rigidbody.object_add()
+        obj.rigid_body.type = 'ACTIVE'
+        obj.rigid_body.mass = 1.0
+        obj.rigid_body.collision_shape = 'CONVEX_HULL'
+
+# === SET PHYSICS SETTINGS ===
+bpy.context.scene.rigidbody_world.time_scale = 1.0
+bpy.context.scene.frame_start = 1
+bpy.context.scene.frame_end = 60  # or adjust as needed
+
+# === BAKE SIMULATION ===
+bpy.ops.ptcache.bake_all(bake=True)
+
+print("Physics setup complete and baked.")
